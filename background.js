@@ -229,6 +229,7 @@ async function runSearchSession(selectedTopics, settings) {
     const onTabRemoved = (removedTabId) => {
         if (removedTabId === tabId) {
             tabAlive = false;
+            stopRequested = true; // Trigger stop để resetState() được gọi
             chrome.tabs.onUpdated.removeListener(onTabUpdated);
             chrome.tabs.onRemoved.removeListener(onTabRemoved);
         }
