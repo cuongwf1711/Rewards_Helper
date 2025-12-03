@@ -139,7 +139,9 @@ const App = {
     UI.init();
     this.bindEvents();
     UI.displayVersionAndSignature();
-    const settings = await Storage.load(['customTopics', 'tabsToOpen', 'delayMode', 'fixedDelaySeconds', 'runLogs']);
+    // Load với defaults để đảm bảo có giá trị mặc định
+    const defaults = { tabsToOpen: 60, delayMode: 'random', fixedDelaySeconds: 5, customTopics: [], runLogs: [] };
+    const settings = await Storage.load(defaults);
     UI.populateSettings(settings);
   },
 

@@ -88,15 +88,15 @@
       <h1>Cài đặt chung</h1>
       <div class="form-group">
         <label for="tabsToOpen">Số lượt tìm kiếm mỗi lần chạy (một tab được điều hướng tuần tự):</label>
-        <input type="number" id="tabsToOpen" min="1" max="100" value="1">
+        <input type="number" id="tabsToOpen" min="1" max="100" value="60">
         <div style="font-size: 0.9em; color:#6b6f76; margin-top:6px">Trước đây là số tab đồng thời; bây giờ nó điều khiển số tìm kiếm tuần tự trên 1 tab.</div>
       </div>
       <div class="form-group">
         <label>Cơ chế delay khi mở tab:</label>
         <div class="radio-group">
-          <label><input type="radio" name="delayMode" value="immediate" checked> Mở ngay lập tức</label>
+          <label><input type="radio" name="delayMode" value="immediate"> Mở ngay lập tức</label>
           <label><input type="radio" name="delayMode" value="fixed"> Delay X giây</label>
-          <label><input type="radio" name="delayMode" value="random"> Delay ngẫu nhiên (5-20s)</label>
+          <label><input type="radio" name="delayMode" value="random" checked> Delay ngẫu nhiên</label>
         </div>
         <div id="fixedDelaySetting" class="sub-setting">
           <label for="fixedDelaySeconds">Số giây delay:</label>

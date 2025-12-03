@@ -16,7 +16,11 @@
   "permissions": [
     "storage",
     "tabs",
-    "alarms"
+    "alarms",
+    "scripting"
+  ],
+  "host_permissions": [
+    "*://*.bing.com/*"
   ],
   "options_page": "options.html"
 }

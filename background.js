@@ -1,3 +1,25 @@
+// ==================== CONSTANTS - Dễ dàng điều chỉnh ====================
+const CONFIG = {
+    // Delay giữa các lần tìm kiếm (ms)
+    SEARCH_DELAY_MIN: 5000,      // 5 giây
+    SEARCH_DELAY_MAX: 20000,     // 30 giây
+    
+    // Scroll settings
+    SCROLL_DISTANCE_MIN: 80,     // px mỗi lần scroll
+    SCROLL_DISTANCE_MAX: 250,    // px mỗi lần scroll
+    SCROLL_DELAY_MIN: 300,       // ms giữa các lần scroll
+    SCROLL_DELAY_MAX: 900,       // ms giữa các lần scroll
+    SCROLL_START_DELAY_MIN: 500, // ms chờ trước khi bắt đầu scroll
+    SCROLL_START_DELAY_MAX: 1500,// ms chờ trước khi bắt đầu scroll
+    SCROLL_UP_CHANCE: 0.1,       // 20% cơ hội scroll lên khi chưa đến cuối
+    
+    // Defaults cho settings
+    DEFAULT_TABS_TO_OPEN: 60,
+    DEFAULT_DELAY_MODE: 'random',
+    DEFAULT_FIXED_DELAY_SECONDS: 10,
+};
+// ========================================================================
+
 let topics = {};
 let isRunning = false;
 let stopRequested = false;
@@ -5,6 +27,67 @@ let openedTabs = 0;
 let totalTabs = 0;
 
 const sleep = ms => new Promise(res => setTimeout(res, ms));
+
+// --- Auto-scroll function to simulate real user behavior ---
+function startAutoScroll(tabId) {
+    // Truyền config vào injected script
+    const scrollConfig = {
+        distMin: CONFIG.SCROLL_DISTANCE_MIN,
+        distMax: CONFIG.SCROLL_DISTANCE_MAX,
+        delayMin: CONFIG.SCROLL_DELAY_MIN,
+        delayMax: CONFIG.SCROLL_DELAY_MAX,
+        startDelayMin: CONFIG.SCROLL_START_DELAY_MIN,
+        startDelayMax: CONFIG.SCROLL_START_DELAY_MAX,
+        upChance: CONFIG.SCROLL_UP_CHANCE,
+    };
+    
+    chrome.scripting.executeScript({
+        target: { tabId },
+        func: (cfg) => {
+            if (window._autoScrolling) return;
+            window._autoScrolling = true;
+
+            const randInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+            let reachedBottom = false;
+
+            const doScroll = () => {
+                if (!window._autoScrolling || !document.body) return;
+
+                const totalHeight = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
+                const maxScroll = totalHeight - window.innerHeight;
+                const currentY = window.scrollY;
+
+                let direction;
+                if (!reachedBottom) {
+                    direction = (currentY > 100 && Math.random() < cfg.upChance) ? -1 : 1;
+                    if (currentY >= maxScroll - 10) {
+                        reachedBottom = true;
+                        direction = -1;
+                    }
+                } else {
+                    direction = -1;
+                    if (currentY <= 10) {
+                        window._autoScrolling = false;
+                        return;
+                    }
+                }
+
+                let scrollDist = randInt(cfg.distMin, cfg.distMax);
+                if (direction === 1) {
+                    scrollDist = Math.min(scrollDist, maxScroll - currentY);
+                } else {
+                    scrollDist = Math.min(scrollDist, currentY);
+                }
+
+                window.scrollBy({ top: direction * scrollDist, behavior: 'smooth' });
+                setTimeout(doScroll, randInt(cfg.delayMin, cfg.delayMax));
+            };
+
+            setTimeout(doScroll, randInt(cfg.startDelayMin, cfg.startDelayMax));
+        },
+        args: [scrollConfig]
+    }).catch(() => {});
+}
 
 // --- Helpers to build realistic Bing search URLs with common query parameters ---
 const randInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
@@ -62,16 +145,12 @@ const resetState = () => {
     setTimeout(() => {
         chrome.action.setBadgeText({ text: '' });
     }, 2000);
-    // broadcast reset status
-    try { chrome.runtime.sendMessage({ type: 'status', isRunning, openedTabs, totalTabs }); } catch (e) { }
+    // broadcast reset status (ignore if no receiver)
+    chrome.runtime.sendMessage({ type: 'status', isRunning, openedTabs, totalTabs }).catch(() => {});
 };
 
 function sendStatus() {
-    try {
-        chrome.runtime.sendMessage({ type: 'status', isRunning, openedTabs, totalTabs });
-    } catch (e) {
-        // service worker may be inactive
-    }
+    chrome.runtime.sendMessage({ type: 'status', isRunning, openedTabs, totalTabs }).catch(() => {});
 }
 
 /**
@@ -79,7 +158,12 @@ function sendStatus() {
  * @returns {Promise<object>} A promise that resolves to the settings object.
  */
 async function getSettings() {
-    const defaults = { tabsToOpen: 1, delayMode: 'immediate', fixedDelaySeconds: 5, customTopics: [] };
+    const defaults = {
+        tabsToOpen: CONFIG.DEFAULT_TABS_TO_OPEN,
+        delayMode: CONFIG.DEFAULT_DELAY_MODE,
+        fixedDelaySeconds: CONFIG.DEFAULT_FIXED_DELAY_SECONDS,
+        customTopics: []
+    };
     const settings = await chrome.storage.local.get(defaults);
     return settings;
 }
@@ -130,6 +214,27 @@ async function runSearchSession(selectedTopics, settings) {
         return;
     }
 
+    // Track if tab is still alive
+    let tabAlive = true;
+
+    // Listener to trigger auto-scroll when page finishes loading
+    const onTabUpdated = (updatedTabId, changeInfo) => {
+        if (tabAlive && updatedTabId === tabId && changeInfo.status === 'complete') {
+            startAutoScroll(tabId);
+        }
+    };
+    chrome.tabs.onUpdated.addListener(onTabUpdated);
+
+    // Cleanup when tab is closed
+    const onTabRemoved = (removedTabId) => {
+        if (removedTabId === tabId) {
+            tabAlive = false;
+            chrome.tabs.onUpdated.removeListener(onTabUpdated);
+            chrome.tabs.onRemoved.removeListener(onTabRemoved);
+        }
+    };
+    chrome.tabs.onRemoved.addListener(onTabRemoved);
+
     openedTabs++;
     await chrome.action.setBadgeText({ text: `${openedTabs}/${totalTabs}` });
     sendStatus();
@@ -138,37 +243,50 @@ async function runSearchSession(selectedTopics, settings) {
     const executedTopics = [firstTopic];
 
     for (const topic of selectedTopics) {
-        if (stopRequested) {
-            console.log("Stop request received. Halting operation.");
+        if (stopRequested || !tabAlive) {
+            console.log("Stop requested or tab closed. Halting operation.");
             break;
         }
 
         // Delay behavior: immediate | fixed | random
         if (delayMode !== 'immediate') {
-            // Random delay now ranges from 5s to 20s (5000-20000 ms)
-            const delayMs = (delayMode === 'fixed') ? fixedDelaySeconds * 1000 : randInt(5000, 20000);
+            const delayMs = (delayMode === 'fixed')
+                ? fixedDelaySeconds * 1000
+                : randInt(CONFIG.SEARCH_DELAY_MIN, CONFIG.SEARCH_DELAY_MAX);
             await sleep(delayMs);
         }
 
-        if (stopRequested) { // Check again after delay
-            console.log("Stop request received. Halting operation.");
+        if (stopRequested || !tabAlive) {
+            console.log("Stop requested or tab closed. Halting operation.");
             break;
         }
 
         const url = buildBingUrl(topic, { pq: previousTopic });
-        await new Promise(resolve => {
+        const updateSuccess = await new Promise(resolve => {
             chrome.tabs.update(tabId, { url }, () => {
+                if (chrome.runtime.lastError) {
+                    // Tab no longer exists
+                    tabAlive = false;
+                    resolve(false);
+                    return;
+                }
                 if (!stopRequested) {
                     openedTabs++;
                     chrome.action.setBadgeText({ text: `${openedTabs}/${totalTabs}` });
                     sendStatus();
                 }
-                resolve();
+                resolve(true);
             });
         });
+        
+        if (!updateSuccess) break;
         previousTopic = topic;
         executedTopics.push(topic);
     }
+
+    // Cleanup scroll listeners when session ends
+    chrome.tabs.onUpdated.removeListener(onTabUpdated);
+    chrome.tabs.onRemoved.removeListener(onTabRemoved);
 
     // Return the list of topics that were actually executed in this session
     return executedTopics;
